@@ -165,10 +165,10 @@ defmodule TerminalTest do
     filesystem = Terminal.analyze(@input)
 
     assert %{
-             ["/"] => 48_381_165,
-             ["/", "a"] => 94853,
-             ["/", "a", "e"] => 584,
-             ["/", "d"] => 24_933_642
+             "/" => 48_381_165,
+             "a" => 94853,
+             "e" => 584,
+             "d" => 24_933_642
            } = Terminal.directory_sizes(filesystem)
   end
 end
@@ -217,15 +217,12 @@ defmodule Terminal do
     end)
   end
 
-  def directory_sizes(directory, path \\ [], totals \\ %{}) when is_map(directory) do
+  def directory_sizes(directory, totals \\ %{}) when is_map(directory) do
     directory
     |> Enum.reduce(totals, fn
-      {dirname, nested_dir}, totals when is_map(nested_dir) ->
-        nested_path = path ++ [dirname]
-        nested_dir_size = size_of(nested_dir)
-        totals = Map.put(totals, nested_path, nested_dir_size)
-
-        directory_sizes(nested_dir, nested_path, totals)
+      {dirname, directory}, totals when is_map(directory) ->
+        totals = Map.put(totals, dirname, size_of(directory))
+        directory_sizes(directory, totals)
 
       {_filename, size}, totals when is_integer(size) ->
         totals
@@ -253,8 +250,8 @@ input
 |> Kino.Input.read()
 |> Terminal.analyze()
 |> Terminal.directory_sizes()
-|> Enum.filter(fn {_dir_path, size} -> size < 100_000 end)
-|> Enum.map(fn {_dir_path, size} -> size end)
+|> Enum.filter(fn {_dirname, size} -> size < 100_000 end)
+|> Enum.map(fn {_dirname, size} -> size end)
 |> Enum.sum()
 ```
 
@@ -283,21 +280,19 @@ Find the smallest directory that, if deleted, would free up enough space on the 
 total_disk_space = 70_000_000
 free_space_required = 30_000_000
 
-sizes =
+directory_sizes =
   input
   |> Kino.Input.read()
   |> Terminal.analyze()
   |> Terminal.directory_sizes()
 
-used_space = Map.get(sizes, ["/"]) |> dbg
-available_space = (total_disk_space - used_space) |> dbg
+available_space = total_disk_space - directory_sizes["/"]
+still_needed = free_space_required - available_space
 
-still_needed = (free_space_required - available_space) |> dbg
-
-sizes
-|> Enum.sort_by(fn {_dir_path, size} -> size end, :asc)
+directory_sizes
+|> Enum.sort_by(fn {_dirname, size} -> size end, :asc)
 |> Enum.find_value(fn
-  {_dir_path, size} when size < still_needed -> false
-  {_dir_path, size} when size >= still_needed -> size
+  {_dirname, size} when size < still_needed -> false
+  {_dirname, size} when size >= still_needed -> size
 end)
 ```
