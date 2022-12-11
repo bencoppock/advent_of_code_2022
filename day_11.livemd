@@ -1,0 +1,214 @@
+# Day 11: Monkey in the Middle
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.7.0"}
+])
+```
+
+## Part 1
+
+<!-- livebook:{"disable_formatting":true} -->
+
+```elixir
+input = Kino.Input.textarea("Data Input:")
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+defmodule Monkey do
+  use Agent
+
+  defstruct name: nil,
+            items: [],
+            worry_operation: nil,
+            get_recipient: nil,
+            inspections: 0,
+            worry_test: nil
+
+  def start_link(%Monkey{} = monkey) do
+    Agent.start_link(fn -> monkey end, name: :"#{monkey.name}")
+  end
+
+  @doc """
+  Starts process for monkey described in `text_block`
+
+  The process will be named according to the provided monkey number. 
+  If the process is already running (for example, because it's already running
+  in our LiveBook), the process will be updated and reset to the provided
+  initial state for this monkey.
+  """
+  def new(text_block) when is_binary(text_block) do
+    [name, items, op, test, if_true, if_false] = String.split(text_block, "\n")
+
+    state =
+      struct!(__MODULE__,
+        name: parse_name(name),
+        items: parse_items(items),
+        worry_operation: parse_worry_operation(op),
+        get_recipient: parse_recipient_test(test, if_true, if_false),
+        worry_test: parse_worry_test(test)
+      )
+
+    state
+    |> Monkey.start_link()
+    |> case do
+      {:ok, pid} ->
+        pid
+
+      {:error, {:already_started, pid}} ->
+        # In LiveBook, we may already have the monkey process established from
+        # a previous attempt at solving the problem. This resets the state
+        # to the expected starting state
+        Monkey.update(pid, state)
+        pid
+    end
+  end
+
+  def throw(agent, worry) do
+    Agent.update(agent, fn monkey ->
+      %{monkey | items: monkey.items ++ [worry]}
+    end)
+  end
+
+  def value(agent) do
+    Agent.get(agent, & &1)
+  end
+
+  def update(agent, state) do
+    Agent.update(agent, fn _ -> state end)
+  end
+
+  def take_turn(pid, worry_reducer) when is_pid(pid) do
+    state = value(pid) |> do_turn(worry_reducer)
+    update(pid, state)
+  end
+
+  defp do_turn(%__MODULE__{items: []} = monkey, _), do: monkey
+
+  defp do_turn(%__MODULE__{items: items} = monkey, worry_reducer) do
+    for item <- items, reduce: monkey do
+      monkey ->
+        new_worry = inspect_item(monkey, item) |> worry_reducer.()
+        recipient_num = monkey.get_recipient.(new_worry)
+        recipient_agent = :"Monkey #{recipient_num}"
+
+        # IO.puts("#{monkey.name} throws #{new_worry} to #{recipient_num}")
+        Monkey.throw(recipient_agent, new_worry)
+
+        %{monkey | inspections: monkey.inspections + 1}
+    end
+    |> Map.put(:items, [])
+  end
+
+  defp inspect_item(monkey, item), do: monkey.worry_operation.(item)
+
+  defp parse_name(name), do: String.trim_trailing(name, ":")
+
+  defp parse_items("  Starting items: " <> text) do
+    text
+    |> String.split(", ")
+    |> Enum.map(&String.to_integer/1)
+  end
+
+  defp parse_worry_operation("  Operation: new = old * old") do
+    fn worry -> worry * worry end
+  end
+
+  defp parse_worry_operation("  Operation: new = old + old") do
+    fn worry -> worry + worry end
+  end
+
+  defp parse_worry_operation("  Operation: new = old * " <> val) do
+    fn worry -> worry * String.to_integer(val) end
+  end
+
+  defp parse_worry_operation("  Operation: new = old + " <> val) do
+    fn worry -> worry + String.to_integer(val) end
+  end
+
+  defp parse_recipient_test(test, if_true, if_false) do
+    divisor = parse_worry_test(test)
+    true_monkey_num = parse_if(if_true)
+    false_monkey_num = parse_if(if_false)
+
+    fn worry ->
+      case rem(worry, divisor) do
+        0 -> true_monkey_num
+        _ -> false_monkey_num
+      end
+    end
+  end
+
+  defp parse_worry_test("  Test: divisible by " <> val), do: String.to_integer(val)
+
+  defp parse_if("    If true: throw to monkey " <> val), do: String.to_integer(val)
+  defp parse_if("    If false: throw to monkey " <> val), do: String.to_integer(val)
+end
+```
+
+```elixir
+defmodule MonkeyBusiness do
+  def do_round(monkey_pids, worry_limiter) do
+    Enum.each(monkey_pids, fn pid ->
+      Monkey.take_turn(pid, worry_limiter)
+    end)
+  end
+end
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+monkey_pids =
+  input
+  |> Kino.Input.read()
+  |> String.split("\n\n")
+  |> Enum.map(fn text_block -> Monkey.new(text_block) end)
+
+Enum.each(1..20, fn i ->
+  IO.write("\rRound #{i}")
+  MonkeyBusiness.do_round(monkey_pids, fn worry -> div(worry, 3) end)
+end)
+
+monkey_pids
+|> Enum.map(fn pid -> Monkey.value(pid) end)
+|> Enum.sort_by(fn %Monkey{inspections: count} -> count end, :desc)
+|> Enum.take(2)
+|> Enum.reduce(1, &Kernel.*(&1.inspections, &2))
+|> dbg
+```
+
+## Part 2
+
+```elixir
+monkey_pids =
+  input
+  |> Kino.Input.read()
+  |> String.split("\n\n")
+  |> Enum.map(fn text_block -> Monkey.new(text_block) end)
+
+limit =
+  monkey_pids
+  |> Enum.reduce(1, fn pid, divisor ->
+    %{worry_test: worry_test} = Monkey.value(pid)
+    worry_test * divisor
+  end)
+
+# Before passing the worry along, we limit it to a maximum defined by the product
+# of all the monkey's various worry tests. We do this by dividing the worry by this
+# product and only keeping the remainder. If the number before being divided was
+# divisible by the worry test, this remainder will be as well. 
+Enum.each(1..10_000, fn i ->
+  IO.write("\rRound #{i}")
+  MonkeyBusiness.do_round(monkey_pids, fn worry -> rem(worry, limit) end)
+end)
+
+monkey_pids
+|> Enum.map(fn pid -> Monkey.value(pid) end)
+|> Enum.sort_by(fn %Monkey{inspections: count} -> count end, :desc)
+|> Enum.take(2)
+|> Enum.reduce(1, &Kernel.*(&1.inspections, &2))
+|> dbg
+```
