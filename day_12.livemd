@@ -1,0 +1,199 @@
+# Day 12: Hill Climbing Algorithm
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.7.0"}
+])
+```
+
+## Part 1
+
+You try contacting the Elves using your handheld device, but the river you're following must be too low to get a decent signal.
+
+You ask the device for a heightmap of the surrounding area (your puzzle input). The heightmap shows the local area from above broken into a grid; the elevation of each square of the grid is given by a single lowercase letter, where a is the lowest elevation, b is the next-lowest, and so on up to the highest elevation, `z`.
+
+Also included on the heightmap are marks for your current position (`S`) and the location that should get the best signal (`E`). Your current position (`S`) has elevation a, and the location that should get the best signal (`E`) has elevation `z`.
+
+You'd like to reach E, but to save energy, you should do it in **as few steps as possible**. During each step, you can move exactly one square up, down, left, or right. To avoid needing to get out your climbing gear, the elevation of the destination square can be **at most one higher** than the elevation of your current square; that is, if your current elevation is `m`, you could step to elevation `n`, but not to elevation `o`. (This also means that the elevation of the destination square can be much lower than the elevation of your current square.)
+
+For example:
+
+```
+Sabqponm
+abcryxxl
+accszExk
+acctuvwj
+abdefghi
+```
+
+Here, you start in the top-left corner; your goal is near the middle. You could start by moving down or right, but eventually you'll need to head toward the e at the bottom. From there, you can spiral around to the goal:
+
+```
+v..v<<<<
+>v.vv<<^
+.>vv>E^^
+..v>>>^^
+..>>>>>^
+```
+
+In the above diagram, the symbols indicate whether the path exits each square moving up (`^`), down (`v`), left (`<`), or right (`>`). The location that should get the best signal is still E, and . marks unvisited squares.
+
+This path reaches the goal in **`31`** steps, the fewest possible.
+
+**What is the fewest steps required to move from your current position to the location that should get the best signal?**
+
+<!-- livebook:{"disable_formatting":true} -->
+
+```elixir
+input = Kino.Input.textarea("Data Input:")
+```
+
+```elixir
+defmodule Location do
+  defstruct [:coords, :mark, :elevation, :distance]
+
+  def from(coords, mark) do
+    %__MODULE__{
+      coords: coords,
+      distance: :infinite,
+      elevation: elevation(mark),
+      mark: List.wrap(mark) |> List.to_string()
+    }
+  end
+
+  defp elevation(?S), do: elevation(?a)
+  defp elevation(?E), do: elevation(?z)
+  defp elevation(char), do: char - ?a
+end
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+grid =
+  input
+  |> Kino.Input.read()
+  |> String.split("\n")
+  |> Enum.with_index()
+  |> Enum.reduce(%{}, fn {row, y}, acc ->
+    row
+    |> String.to_charlist()
+    |> Enum.with_index()
+    |> Enum.reduce(acc, fn {code, x}, acc ->
+      Map.put(acc, {x, y}, Location.from({x, y}, code))
+    end)
+  end)
+```
+
+```elixir
+defmodule Route do
+  @moduledoc """
+  This is essentially using Dijkstra’s Algorithm, but we're not bothering to track 
+  distances to all of the nodes. We're only tracking and reporting the distance to 
+  the destination node.
+
+  An alternative would be to use the A* Algorithm, which is an "informed search 
+  algorithm" and should be more efficient, but this was a good starting point.
+  """
+
+  def find_shortest_path(locations, origin_func, dest_func, neighbor_filter) do
+    {origin_coords, origin} = Enum.find(locations, fn {_coords, loc} -> origin_func.(loc) end)
+
+    {_coords, destination} =
+      locations
+      |> Map.put(origin_coords, %Location{origin | distance: 0})
+      |> traverse(neighbor_filter, dest_func)
+
+    destination.distance
+  end
+
+  defp traverse(unvisited, neighbor_filter, is_destination) when is_map(unvisited) do
+    {coords, location} =
+      unvisited
+      |> Enum.filter(fn {_coords, loc} -> loc.distance end)
+      |> Enum.min_by(fn {_coords, %Location{distance: dist}} -> dist end)
+
+    if is_destination.(location) do
+      {coords, location}
+    else
+      unvisited
+      |> visit(location, neighbor_filter)
+      |> traverse(neighbor_filter, is_destination)
+    end
+  end
+
+  defp visit(locations, next, neighbor_filter) when is_map(locations) do
+    {current, unvisited} = Map.pop(locations, next.coords)
+
+    unvisited
+    |> get_neighbors(current)
+    |> Enum.filter(&neighbor_filter.(current, &1))
+    |> Enum.reduce(unvisited, fn neighbor, acc ->
+      new_distance = Enum.min([current.distance + 1, neighbor.distance])
+      updated_neighbor = %Location{neighbor | distance: new_distance}
+      Map.put(acc, neighbor.coords, updated_neighbor)
+    end)
+  end
+
+  defp get_neighbors(locations, location) when is_map(locations) do
+    locations
+    |> Map.take(neighbor_coords(location))
+    |> Map.values()
+  end
+
+  defp neighbor_coords(%Location{coords: {x, y}}) do
+    [
+      {x - 1, y},
+      {x + 1, y},
+      {x, y - 1},
+      {x, y + 1}
+    ]
+  end
+end
+```
+
+```elixir
+origin_func = fn loc -> loc.mark == "S" end
+dest_func = fn loc -> loc.mark == "E" end
+neighbor_filter = fn current, neighbor -> neighbor.elevation - current.elevation <= 1 end
+
+Route.find_shortest_path(grid, origin_func, dest_func, neighbor_filter)
+```
+
+## Part 2
+
+As you walk up the hill, you suspect that the Elves will want to turn this into a hiking trail. The beginning isn't very scenic, though; perhaps you can find a better starting point.
+
+To maximize exercise while hiking, the trail should start as low as possible: elevation `a`. The goal is still the square marked `E`. However, the trail should still be direct, taking the fewest steps to reach its goal. So, you'll need to find the shortest path from **any square at elevation `a`** to the square marked `E`.
+
+Again consider the example from above:
+
+```
+Sabqponm
+abcryxxl
+accszExk
+acctuvwj
+abdefghi
+```
+
+Now, there are six choices for starting position (five marked `a`, plus the square marked `S` that counts as being at elevation `a`). If you start at the bottom-left square, you can reach the goal most quickly:
+
+```
+...v<<<<
+...vv<<^
+...v>E^^
+.>v>>>^^
+>^>>>>>^
+```
+
+This path reaches the goal in only `29` steps, the fewest possible.
+
+**What is the fewest steps required to move starting from any square with elevation a to the location that should get the best signal?**
+
+```elixir
+origin_func = fn loc -> loc.mark == "E" end
+dest_func = fn loc -> loc.elevation == 0 end
+neighbor_filter = fn current, neighbor -> current.elevation - neighbor.elevation <= 1 end
+
+Route.find_shortest_path(grid, origin_func, dest_func, neighbor_filter)
+```
