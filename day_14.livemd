@@ -1,0 +1,139 @@
+# Day 14: Regolith Reservoir
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.7.0"}
+])
+```
+
+## Part 1
+
+
+
+<!-- livebook:{"disable_formatting":true} -->
+
+```elixir
+input = Kino.Input.textarea("Data Input:")
+```
+
+```elixir
+defmodule Regolith do
+  defstruct [:entry_coords, coords: %{}, max_rock_y: 0, floor_y: nil, blocked: false]
+
+  def new(opts), do: struct!(__MODULE__, opts)
+
+  def add_path(%__MODULE__{} = regolith, coords) when is_list(coords) do
+    coords
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.reduce(regolith, &add_line(&2, &1))
+  end
+
+  defp add_line(%__MODULE__{} = regolith, [p1, p2]) do
+    coords_range(p1, p2)
+    |> Enum.reduce(regolith, fn {x, y}, acc ->
+      acc
+      |> Map.update(:max_rock_y, nil, fn existing_max -> Enum.max([existing_max, y]) end)
+      |> fill({x, y}, :rock)
+    end)
+  end
+
+  defp coords_range({x1, y1}, {x2, y2}) do
+    for x <- x1..x2, y <- y1..y2 do
+      {x, y}
+    end
+  end
+
+  def pour_into(%__MODULE__{entry_coords: origin} = regolith) do
+    case Regolith.fall_into(regolith, origin) do
+      :into_the_abyss ->
+        regolith
+
+      %__MODULE__{blocked: false} = updated_regolith ->
+        pour_into(updated_regolith)
+
+      %__MODULE__{blocked: true} = updated_regolith ->
+        updated_regolith
+    end
+  end
+
+  def fall_into(%__MODULE__{} = regolith, point) do
+    cond do
+      :abyss == get(regolith, coords(:below, point)) ->
+        :into_the_abyss
+
+      :open == get(regolith, coords(:below, point)) ->
+        fall_into(regolith, coords(:below, point))
+
+      :open == get(regolith, coords(:below_left, point)) ->
+        fall_into(regolith, coords(:below_left, point))
+
+      :open == get(regolith, coords(:below_right, point)) ->
+        fall_into(regolith, coords(:below_right, point))
+
+      true ->
+        fill(regolith, point)
+    end
+  end
+
+  defp fill(regolith, coords, substance \\ :sand) do
+    if regolith.entry_coords == coords do
+      regolith
+      |> put_in([Access.key!(:coords), coords], substance)
+      |> struct!(blocked: true)
+    else
+      regolith
+      |> put_in([Access.key!(:coords), coords], substance)
+    end
+  end
+
+  defp get(%__MODULE__{floor_y: nil, max_rock_y: max_y}, {_x, y}) when y > max_y, do: :abyss
+  defp get(%__MODULE__{floor_y: y}, {_x, y}), do: :rock
+  defp get(%__MODULE__{} = regolith, coords), do: Map.get(regolith.coords, coords, :open)
+
+  defp coords(:below, {x, y}), do: {x, y + 1}
+  defp coords(:below_left, {x, y}), do: {x - 1, y + 1}
+  defp coords(:below_right, {x, y}), do: {x + 1, y + 1}
+end
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+regolith = Regolith.new(entry_coords: {500, 0})
+
+regolith =
+  input
+  |> Kino.Input.read()
+  |> String.splitter("\n")
+  |> Enum.reduce(regolith, fn line, acc ->
+    vertices =
+      line
+      |> String.split(" -> ")
+      |> Enum.map(fn pair ->
+        [x, y] = String.split(pair, ",")
+        {String.to_integer(x), String.to_integer(y)}
+      end)
+
+    Regolith.add_path(acc, vertices)
+  end)
+```
+
+```elixir
+regolith = Regolith.pour_into(regolith)
+Enum.count(regolith.coords, fn {_coords, status} -> status == :sand end)
+```
+
+## Part 2
+
+
+
+```elixir
+{{_x, max_y}, _status} = Enum.max_by(regolith.coords, fn {{_x, y}, _status} -> y end)
+
+regolith =
+  regolith
+  |> struct!(floor_y: max_y + 2)
+  |> Regolith.pour_into()
+
+Enum.count(regolith.coords, fn {_coords, status} -> status == :sand end)
+```
