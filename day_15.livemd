@@ -1,0 +1,164 @@
+# Day 15: Beacon Exclusion Zone
+
+```elixir
+Mix.install([
+  {:kino, "~> 0.7.0"},
+  {:flow, "~> 1.0"}
+])
+```
+
+## Part 1
+
+<!-- livebook:{"disable_formatting":true} -->
+
+```elixir
+input = Kino.Input.textarea("Data Input:")
+```
+
+<!-- livebook:{"reevaluate_automatically":true} -->
+
+```elixir
+defmodule Sensor do
+  defstruct [:coords, :beacon, :distance]
+
+  def new({x, y}) do
+    struct!(__MODULE__, coords: {x, y})
+  end
+
+  def beacon_at(%__MODULE__{} = sensor, {x, y}) do
+    %{sensor | beacon: {x, y}, distance: manhattan_distance(sensor, {x, y})}
+  end
+
+  # https://en.wikipedia.org/wiki/Taxicab_geometry
+  defp manhattan_distance(%__MODULE__{coords: {x1, y1}}, {x2, y2}) do
+    abs(x2 - x1) + abs(y2 - y1)
+  end
+end
+```
+
+```elixir
+pattern = ~r/^Sensor at x=(-?\d+), y=(-?\d+): closest beacon is at x=(-?\d+), y=(-?\d+)$/
+
+parse_line = fn line ->
+  Regex.run(pattern, line, capture: :all_but_first)
+end
+
+sensors =
+  input
+  |> Kino.Input.read()
+  |> String.splitter("\n")
+  |> Enum.map(fn line ->
+    [sensor_x, sensor_y, beacon_x, beacon_y] =
+      line
+      |> parse_line.()
+      |> Enum.map(&String.to_integer/1)
+
+    Sensor.new({sensor_x, sensor_y})
+    |> Sensor.beacon_at({beacon_x, beacon_y})
+  end)
+```
+
+```elixir
+target_y = 2_000_000
+
+beacon_x_locs_in_target_row =
+  sensors
+  |> Enum.filter(fn %Sensor{beacon: {_x, y}} -> y == target_y end)
+  |> MapSet.new(fn %Sensor{beacon: {_x, y}} -> y end)
+
+ruled_out =
+  sensors
+  |> Enum.reduce(MapSet.new(), fn %Sensor{coords: {sensor_x, sensor_y}} = sensor, set ->
+    distance_from_target_row = abs(target_y - sensor_y)
+    influence = Enum.max([0, sensor.distance - distance_from_target_row])
+    x_locs = MapSet.new((sensor_x - influence)..(sensor_x + influence))
+    MapSet.union(set, x_locs)
+  end)
+  |> MapSet.difference(beacon_x_locs_in_target_row)
+  |> MapSet.size()
+```
+
+## Part 2
+
+```elixir
+defmodule CustomRange do
+  @doc """
+  Merge overlapping and contiguous ranges
+
+  Returns an ordered list of the resulting non-overlapping, non-contiguous ranges.
+  """
+  def combine(ranges) do
+    ranges
+    |> sort()
+    |> do_combine()
+    |> Enum.reverse()
+  end
+
+  defp sort(ranges), do: Enum.sort_by(ranges, &elem(&1, 0))
+
+  defp do_combine(ranges, combined \\ [])
+
+  defp do_combine([], combined), do: combined
+  defp do_combine([range], combined), do: [range | combined]
+
+  defp do_combine([{a1, a2}, {b1, b2} | rest], combined) do
+    if a2 + 1 >= b1 do
+      do_combine([{a1, Enum.max([a2, b2])} | rest], combined)
+    else
+      do_combine([{b1, b2} | rest], [{a1, a2} | combined])
+    end
+  end
+
+  @doc """
+  Returns the missing value between `min`/`max` for the provided range(s)
+  """
+  def missing_value([{x1, x2}], {min, max}) when x1 <= min and x2 >= max, do: nil
+
+  def missing_value([{x1, x2}, {x3, x4}], {min, max})
+      when x1 <= min and x4 >= max and x2 + 2 == x3 do
+    x2 + 1
+  end
+
+  def missing_value([{x1, x2}], {min, max}) when min + 1 == x1 and x2 >= max, do: min
+  def missing_value([{x1, x2}], {min, max}) when x1 <= min and max - 1 == x2, do: max
+end
+```
+
+## Part 2
+
+```elixir
+min_x = 0
+max_x = 4_000_000
+
+min_y = 0
+max_y = 4_000_000
+
+# max_y = max_x = 20
+
+{x, y} =
+  min_y..max_y
+  |> Flow.from_enumerable()
+  |> Flow.map(fn target_y ->
+    if rem(target_y, 100_000) == 0, do: IO.inspect(target_y, label: "ROW")
+
+    target_x =
+      sensors
+      |> Enum.reduce([], fn %Sensor{coords: {x, y}} = sensor, ranges ->
+        distance_from_target_row = abs(target_y - y)
+
+        case sensor.distance - distance_from_target_row do
+          reach when reach < 0 -> ranges
+          reach -> [{x - reach, x + reach} | ranges]
+        end
+      end)
+      |> CustomRange.combine()
+      |> CustomRange.missing_value({min_x, max_x})
+
+    {target_x, target_y}
+  end)
+  |> Flow.reject(fn {x, _y} -> is_nil(x) end)
+  |> Enum.find(& &1)
+
+IO.inspect({x, y}, label: "FOUND IT!")
+x * 4_000_000 + y
+```
