@@ -9,8 +9,6 @@ Mix.install([
 
 ## Part 1
 
-<!-- livebook:{"disable_formatting":true} -->
-
 ```elixir
 input = Kino.Input.textarea("Data Input:")
 ```
@@ -32,6 +30,10 @@ defmodule Sensor do
   # https://en.wikipedia.org/wiki/Taxicab_geometry
   defp manhattan_distance(%__MODULE__{coords: {x1, y1}}, {x2, y2}) do
     abs(x2 - x1) + abs(y2 - y1)
+  end
+
+  def rows_reached(%__MODULE__{distance: dist, coords: {_x, sensor_y}}, min_y, max_y) do
+    Enum.max([min_y, sensor_y - dist])..Enum.min([max_y, sensor_y + dist])
   end
 end
 ```
@@ -158,6 +160,46 @@ max_y = 4_000_000
   end)
   |> Flow.reject(fn {x, _y} -> is_nil(x) end)
   |> Enum.find(& &1)
+
+IO.inspect({x, y}, label: "FOUND IT!")
+x * 4_000_000 + y
+```
+
+## Part 2, take 2
+
+```elixir
+min_x = 0
+max_x = 4_000_000
+
+min_y = 0
+max_y = 4_000_000
+
+# max_y = max_x = 20
+
+{x, y} =
+  sensors
+  |> Enum.with_index()
+  |> Flow.from_enumerable(max_demand: 1)
+  |> Flow.flat_map(fn {%Sensor{coords: {x, y}} = sensor, index} ->
+    IO.inspect(index, label: "SENSOR")
+
+    Sensor.rows_reached(sensor, min_y, max_y)
+    |> Enum.map(fn row_y ->
+      distance_from_target_row = abs(row_y - y)
+      reach = sensor.distance - distance_from_target_row
+      {row_y, {x - reach, x + reach}}
+    end)
+  end)
+  |> Flow.partition(key: {:elem, 0})
+  |> Flow.reduce(fn -> %{} end, fn {y, x_range}, acc ->
+    Map.update(acc, y, [x_range], fn x_ranges ->
+      CustomRange.combine([x_range | x_ranges])
+    end)
+  end)
+  |> Enum.find_value(fn {y, x_ranges} ->
+    x = CustomRange.missing_value(x_ranges, {min_x, max_x})
+    x && {x, y}
+  end)
 
 IO.inspect({x, y}, label: "FOUND IT!")
 x * 4_000_000 + y
